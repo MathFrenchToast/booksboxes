@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AllBAL — Méta-annuaire des Boîtes à Livres en France</title>
+  
+  <!-- Leaflet 1.9.4 CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <!-- Leaflet.markercluster 1.5.3 CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
+
+  <!-- Google Fonts & Stylesheet -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/style.css?v=5">
+</head>
+<body>
+  <!-- Header principal -->
+  <header class="navbar">
+    <div class="navbar-brand">
+      <span class="logo">📚</span>
+      <div>
+        <h1>AllBAL</h1>
+        <p class="tagline">Méta-annuaire consolidé des boîtes à livres</p>
+      </div>
+    </div>
+
+    <!-- Statistiques globales en direct -->
+    <div id="stats-banner" class="stats-banner" title="Statistiques consolidées de la base">
+      <span class="stat-pill"><strong id="stat-total-bookcases">-</strong> boîtes consolidées</span>
+      <span class="stat-pill"><strong id="stat-multi-sources">-</strong> multi-sources (recoupées)</span>
+      <span class="stat-pill"><strong id="stat-with-photo">-</strong> avec photo</span>
+    </div>
+  </header>
+
+  <!-- Panneau de recherche et filtres -->
+  <section class="search-panel">
+    <div class="search-row">
+      <!-- Recherche d'adresse avec autocomplétion BAN -->
+      <div class="search-input-group">
+        <label for="address-input" class="sr-only">Rechercher une adresse ou une commune</label>
+        <div class="input-wrapper">
+          <span class="input-icon">🔍</span>
+          <input 
+            type="search" 
+            id="address-input" 
+            value="18 Rue du Presbytère, 31540 Saint-Julia"
+            placeholder="Rechercher une ville, adresse, code postal..." 
+            autocomplete="off"
+          />
+          <button id="clear-search-btn" class="clear-btn" style="display:block;" title="Effacer la recherche">&times;</button>
+        </div>
+        <!-- Liste de suggestions BAN -->
+        <ul id="autocomplete-list" class="autocomplete-list" style="display: none;"></ul>
+      </div>
+
+      <!-- Bouton GPS "Autour de moi" -->
+      <button id="locate-btn" class="btn btn-primary" title="Utiliser ma position GPS actuelle">
+        <span class="btn-icon">📍</span>
+        <span>Autour de moi</span>
+      </button>
+
+      <!-- Sélecteur de rayon -->
+      <div class="radius-selector">
+        <label for="radius-select">Rayon :</label>
+        <select id="radius-select">
+          <option value="1">1 km</option>
+          <option value="2">2 km</option>
+          <option value="5">5 km</option>
+          <option value="10">10 km</option>
+          <option value="20" selected>20 km</option>
+          <option value="50">50 km</option>
+        </select>
+      </div>
+
+      <!-- Export GeoJSON -->
+      <button id="export-btn" class="btn btn-outline" title="Télécharger la sélection courante au format GeoJSON standard">
+        <span>📥 GeoJSON</span>
+      </button>
+
+      <!-- Bascule vue Mobile (Carte / Liste) -->
+      <div class="view-toggle-mobile">
+        <button id="toggle-map-btn" class="btn-toggle active">🗺️ Carte</button>
+        <button id="toggle-list-btn" class="btn-toggle">📋 Liste</button>
+      </div>
+    </div>
+
+    <!-- Barre de filtres secondaires -->
+    <div class="filters-row">
+      <div class="filter-group sources-group">
+        <span class="filter-label">Sources :</span>
+        <label class="checkbox-label" title="OpenStreetMap / boites-a-livres.fr (Dump national)">
+          <input type="checkbox" name="source" value="boites_a_livres_fr" checked>
+          <span class="source-badge badge-boites_a_livres_fr">OSM / Boites-a-livres.fr</span>
+          <span class="badge-count" id="count-boites_a_livres_fr"></span>
+        </label>
+        <label class="checkbox-label" title="ZoneLivre.fr">
+          <input type="checkbox" name="source" value="zonelivre" checked>
+          <span class="source-badge badge-zonelivre">ZoneLivre</span>
+          <span class="badge-count" id="count-zonelivre"></span>
+        </label>
+        <label class="checkbox-label" title="Le Bouquin Français">
+          <input type="checkbox" name="source" value="lebouquinfrancais" checked>
+          <span class="source-badge badge-lebouquinfrancais">Le Bouquin Français</span>
+          <span class="badge-count" id="count-lebouquinfrancais"></span>
+        </label>
+        <label class="checkbox-label" title="Boîtes-à-livres.com (synchronisation à la demande)">
+          <input type="checkbox" name="source" value="boitesalivres_com" checked>
+          <span class="source-badge badge-boitesalivres_com">Boitesalivres.com</span>
+          <span class="badge-count" id="count-boitesalivres_com"></span>
+        </label>
+        <label class="checkbox-label" title="NonMarchand.org">
+          <input type="checkbox" name="source" value="nonmarchand" checked>
+          <span class="source-badge badge-nonmarchand">Non-Marchand</span>
+          <span class="badge-count" id="count-nonmarchand"></span>
+        </label>
+      </div>
+
+      <div class="filter-group options-group">
+        <label class="checkbox-label" title="Afficher uniquement les boîtes ayant une photo">
+          <input type="checkbox" id="filter-photo">
+          <span>📷 Avec photo</span>
+        </label>
+        <label class="checkbox-label" title="Interroger les APIs distantes (boitesalivres.com) pour la zone si pas encore en cache (Fair-Use)">
+          <input type="checkbox" id="sync-online" checked>
+          <span>⚡ Synchro web (Fair-use)</span>
+        </label>
+      </div>
+    </div>
+  </section>
+
+  <!-- Disposition principale : Double vue Liste / Carte -->
+  <main class="main-layout">
+    <!-- Panneau latéral : Liste des résultats -->
+    <aside id="list-panel" class="list-panel">
+      <div class="list-header">
+        <div id="results-count-wrapper">
+          <span id="results-count" class="results-count">0 boîte trouvée</span>
+          <span id="results-perimeter" class="results-perimeter"></span>
+        </div>
+        <div id="loading-spinner" class="spinner" style="display: none;" title="Chargement en cours..."></div>
+      </div>
+
+      <!-- Alerte de statut ou notification Fair-Use -->
+      <div id="zone-status-banner" class="zone-status-banner" style="display: none;"></div>
+
+      <!-- Conteneur des cartes de résultats -->
+      <div id="items-container" class="items-container">
+        <div class="empty-state">
+          <div class="empty-icon">📍</div>
+          <h3>Aucune recherche active</h3>
+          <p>Cliquez sur <strong>« Autour de moi »</strong> ou saisissez une commune/adresse ci-dessus pour découvrir les boîtes à livres à proximité.</p>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Zone Cartographique Leaflet -->
+    <section id="map-panel" class="map-panel">
+      <div id="map"></div>
+      
+      <!-- Légende cartographique -->
+      <div class="map-legend">
+        <div class="legend-item"><span class="legend-bullet multi"></span> Confirmée par ≥ 2 sources</div>
+        <div class="legend-item"><span class="legend-bullet single"></span> Source unique</div>
+        <div class="legend-item"><span class="legend-circle"></span> Périmètre de recherche</div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Modal Photo Grand Format -->
+  <div id="photo-modal" class="modal" style="display: none;">
+    <div class="modal-backdrop" id="modal-backdrop"></div>
+    <div class="modal-content">
+      <button class="modal-close" id="modal-close" title="Fermer (Échap)">&times;</button>
+      <div id="modal-spinner" class="spinner" style="display: none; margin: 2rem;"></div>
+      <div class="modal-img-container">
+        <img id="modal-img" src="" alt="Photo agrandie de la boîte à livres" title="Cliquer pour afficher l'image originale dans un nouvel onglet" />
+      </div>
+      <p id="modal-caption" class="modal-caption"></p>
+      <div class="modal-actions" id="modal-actions">
+        <a id="modal-direct-img-link" href="#" target="_blank" rel="noopener noreferrer" class="btn btn-outline modal-btn" style="display: none;">🔍 Pleine résolution ↗</a>
+        <a id="modal-source-link" href="#" target="_blank" rel="noopener noreferrer" class="btn btn-outline modal-btn" style="display: none;">🔗 Source d'origine ↗</a>
+      </div>
+    </div>
+  </div>
+
+  <!-- Scripts JavaScript Leaflet et MarkerCluster -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+  <script src="/app.js?v=5"></script>
+</body>
+</html>

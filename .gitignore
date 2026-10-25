@@ -1,0 +1,46 @@
+# Environnements virtuels & Python bytecode
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Packaging & Build
+build/
+dist/
+*.egg-info/
+.eggs/
+wheels/
+
+# Données locales, dumps et bases SQLite (générés à l'exécution)
+data/raw/
+data/*.db
+data/*.db-journal
+data/*.db-wal
+data/*.db-shm
+data/*.sqlite
+data/*.sqlite3
+
+# Caches de tests, linters et couverture
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+coverage.xml
+
+# Secrets et variables d'environnement locales
+.env
+.env.*
+!.env.example
+
+# IDE & OS
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db

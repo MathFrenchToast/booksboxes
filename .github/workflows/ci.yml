@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: ["main", "master"]
+  pull_request:
+    branches: ["main", "master"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  quality-and-security:
+    name: Lint, Format, Security Audit & Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --frozen --all-extras
+
+      - name: Run Ruff Linter (Code quality & SAST rules)
+        run: uv run ruff check .
+
+      - name: Run Ruff Formatter Check
+        run: uv run ruff format --check .
+
+      - name: Run Bandit SAST Security Scan
+        run: uv run bandit -c pyproject.toml -r src/
+
+      - name: Run pip-audit Dependency Vulnerability Scan
+        run: uv run pip-audit
+
+      - name: Run Pytest Suite
+        run: uv run pytest -v
