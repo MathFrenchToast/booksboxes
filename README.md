@@ -59,12 +59,12 @@ Lancez le serveur local FastAPI / Uvicorn (avec rechargement automatique `--relo
 uv run python -m allbal.cli serve
 ```
 
-Ouvrez ensuite votre navigateur sur :
-👉 **[http://127.0.0.1:8000](http://127.0.0.1:8000)** (ou [http://localhost:8000](http://localhost:8000))
+Ouvrez ensuite votre navigateur sur l'URL affichée dans le terminal :
+👉 **[http://127.0.0.1:8000](http://127.0.0.1:8000)** (si le port `8000` est déjà occupé, le serveur bascule automatiquement sur le premier port libre supérieur, ex: `8001`).
 
 Options disponibles pour `serve` :
 - `--host 0.0.0.0` : écouter sur toutes les interfaces réseau
-- `--port 8080` : changer le port d'écoute (défaut : `8000`)
+- `--port 8080` : changer le port de départ souhaité (`>= 8000`, défaut : `8000`)
 - `--no-reload` : désactiver le rechargement automatique à chaud
 
 ---

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import socket
 
 from allbal.db import DEFAULT_DB_PATH, get_connection, get_stats, init_db
 from allbal.deduplicate import DEFAULT_MERGE_RADIUS_METERS, run_deduplication
@@ -96,12 +97,31 @@ def cmd_stats(args: argparse.Namespace) -> None:
     print()
 
 
+def find_free_port(host: str = "127.0.0.1", start_port: int = 8000, max_tries: int = 100) -> int:
+    """Retourne le premier port TCP libre supérieur ou égal à start_port."""
+    effective_start = max(8000, start_port)
+    upper_bound = min(65535, effective_start + max_tries)
+    for port in range(effective_start, upper_bound + 1):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            try:
+                sock.bind((host, port))
+                return port
+            except OSError:
+                continue
+    raise RuntimeError(
+        f"Aucun port libre trouvé sur {host} dans la plage {effective_start}-{upper_bound}."
+    )
+
+
 def cmd_serve(args: argparse.Namespace) -> None:
-    """Démarre le serveur web FastAPI."""
+    """Démarre le serveur web FastAPI sur un port libre >= 8000."""
     import uvicorn
 
-    print(f"🌐 Lancement du serveur Web AllBAL sur http://{args.host}:{args.port}")
-    uvicorn.run("allbal.api:app", host=args.host, port=args.port, reload=args.reload)
+    port = find_free_port(host=args.host, start_port=args.port)
+    if port != args.port:
+        print(f"⚠️  Le port {args.port} est déjà utilisé, bascule automatique sur le port {port}.")
+    print(f"🌐 Lancement du serveur Web AllBAL sur http://{args.host}:{port}")
+    uvicorn.run("allbal.api:app", host=args.host, port=port, reload=args.reload)
 
 
 def main() -> None:

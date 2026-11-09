@@ -157,3 +157,23 @@ def test_security_url_validators():
     assert not is_allowed_scrape_url("http://127.0.0.1:8000/admin")
     assert not is_allowed_scrape_url("http://169.254.169.254/latest/meta-data/")
     assert not is_allowed_scrape_url("https://evil.example.com/s/10138")
+
+
+def test_find_free_port():
+    """Vérifie la sélection automatique d'un port libre >= 8000 et le contournement d'un port occupé."""
+    import socket
+
+    from allbal.cli import find_free_port
+
+    # 1. Si start_port < 8000, doit forcer >= 8000
+    port = find_free_port("127.0.0.1", start_port=7000)
+    assert port >= 8000
+
+    # 2. Si un port est occupé en écoute, doit choisir un port strictement supérieur
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as occupied_sock:
+        occupied_sock.bind(("127.0.0.1", 0))
+        occupied_sock.listen(1)
+        busy_port = occupied_sock.getsockname()[1]
+        if busy_port >= 8000:
+            next_port = find_free_port("127.0.0.1", start_port=busy_port)
+            assert next_port > busy_port
