@@ -1,0 +1,144 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: allbal
+---
+# 1. Stockage persistant local sur K3s (15 Mo d'empreinte réelle -> 200 Mi alloués)
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: allbal-data-pvc
+  namespace: allbal
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 200Mi
+---
+# 2. Déploiement applicatif FastAPI + SQLite (Single-Writer sur PVC RWO)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: allbal
+  namespace: allbal
+  labels:
+    app: allbal
+spec:
+  replicas: 1
+  strategy:
+    # Important avec un PVC ReadWriteOnce + SQLite : terminer l'ancien Pod avant de monter le nouveau
+    type: Recreate
+  selector:
+    matchLabels:
+      app: allbal
+  template:
+    metadata:
+      labels:
+        app: allbal
+    spec:
+      securityContext:
+        fsGroup: 10001
+      containers:
+        - name: allbal
+          image: ghcr.io/mathfrenchtoast/booksboxes:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8000
+              name: http
+          env:
+            - name: ALLBAL_DB_PATH
+              value: "/app/data/allbal.db"
+          volumeMounts:
+            - name: data
+              mountPath: /app/data
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 384Mi
+          startupProbe:
+            # Laisse jusqu'à 90s lors du tout premier démarrage (téléchargement initial des 4 dumps)
+            httpGet:
+              path: /api/stats
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            failureThreshold: 18
+          readinessProbe:
+            httpGet:
+              path: /api/stats
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/stats
+              port: http
+            periodSeconds: 30
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: allbal-data-pvc
+---
+# 3. Service interne ClusterIP
+apiVersion: v1
+kind: Service
+metadata:
+  name: allbal
+  namespace: allbal
+spec:
+  selector:
+    app: allbal
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP
+---
+# 4. Middleware Traefik BasicAuth (équivalent .htaccess)
+# Le Secret 'allbal-basic-auth-secret' se crée une seule fois via :
+# kubectl -n allbal create secret generic allbal-basic-auth-secret \
+#   --from-literal=users="$(htpasswd -nb VOTRE_USER 'VOTRE_MOT_DE_PASSE')"
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: allbal-basic-auth
+  namespace: allbal
+spec:
+  basicAuth:
+    secret: allbal-basic-auth-secret
+    realm: "AllBAL Restricted Access"
+---
+# 5. Ingress K3s Traefik + TLS Let's Encrypt sur bal.perso.frenchtoast.dev
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: allbal
+  namespace: allbal
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    # Format Traefik CRD : <namespace>-<middleware-name>@kubernetescrd
+    traefik.ingress.kubernetes.io/router.middlewares: allbal-allbal-basic-auth@kubernetescrd
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - bal.perso.frenchtoast.dev
+      secretName: allbal-tls-cert
+  rules:
+    - host: bal.perso.frenchtoast.dev
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: allbal
+                port:
+                  number: 80

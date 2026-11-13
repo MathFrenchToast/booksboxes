@@ -4,11 +4,16 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import sqlite3
 from pathlib import Path
 from typing import Any
 
-DEFAULT_DB_PATH = Path(__file__).resolve().parents[2] / "data" / "allbal.db"
+DEFAULT_DB_PATH = Path(
+    os.environ.get(
+        "ALLBAL_DB_PATH", str(Path(__file__).resolve().parents[2] / "data" / "allbal.db")
+    )
+)
 
 EARTH_RADIUS_METERS = 6_371_000.0
 

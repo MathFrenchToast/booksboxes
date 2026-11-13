@@ -91,3 +91,34 @@ Options disponibles pour `serve` :
   uv run pip-audit
   ```
 
+---
+
+## Déploiement sur K3s (`bal.perso.frenchtoast.dev`)
+
+La base SQLite consolidée ne pesant que **15 Mo** (~24 300 boîtes uniques + index R\*Tree), le déploiement utilise un conteneur léger publié sur `ghcr.io/mathfrenchtoast/booksboxes:latest` et un `PersistentVolumeClaim` K3s (`local-path` de `200Mi`) protégé par BasicAuth Traefik (équivalent `.htaccess`).
+
+### 1. Créer le namespace et le secret BasicAuth (`.htaccess`)
+Sur le cluster K3s (`vm-hostinger`) :
+```bash
+kubectl create namespace allbal --dry-run=client -o yaml | kubectl apply -f -
+
+# Générer l'entrée htpasswd et créer le Secret lu par le Middleware Traefik
+kubectl -n allbal create secret generic allbal-basic-auth-secret \
+  --from-literal=users="$(htpasswd -nb mathieu 'VOTRE_MOT_DE_PASSE')"
+```
+*(Si le package GHCR est privé, créez également un `imagePullSecret` ou passez le package `booksboxes` en visibilité Public dans les paramètres GitHub Packages).*
+
+### 2. Appliquer le manifeste K3s (PVC + Deployment + Service + Middleware + Ingress)
+```bash
+kubectl apply -f k8s/deployment.yaml
+```
+
+- **Premier démarrage automatique** : si `/app/data/allbal.db` est absent sur le PVC, [`docker-entrypoint.sh`](docker-entrypoint.sh) initialise automatiquement le socle national (`allbal.cli init`) et enrichit la zone 31540 (`allbal.cli sync-zone`).
+- **Alternative (copie directe de votre base locale de 15 Mo vers le Pod)** :
+  ```bash
+  POD=$(kubectl -n allbal get pod -l app=allbal -o jsonpath='{.items[0].metadata.name}')
+  kubectl -n allbal cp data/allbal.db "$POD:/app/data/allbal.db"
+  kubectl -n allbal rollout restart deployment/allbal
+  ```
+
+
