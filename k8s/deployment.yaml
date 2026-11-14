@@ -39,6 +39,8 @@ spec:
       labels:
         app: allbal
     spec:
+      imagePullSecrets:
+        - name: ghcr-secret
       securityContext:
         fsGroup: 10001
       containers:
@@ -113,32 +115,100 @@ spec:
     secret: allbal-basic-auth-secret
     realm: "AllBAL Restricted Access"
 ---
-# 5. Ingress K3s Traefik + TLS Let's Encrypt sur bal.perso.frenchtoast.dev
-apiVersion: networking.k8s.io/v1
-kind: Ingress
+# 5. Gateway API + Cert-Manager TLS sur vm-hostinger (identique au pattern sf2 / t3d)
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
 metadata:
-  name: allbal
-  namespace: allbal
-  annotations:
-    cert-manager.io/cluster-issuer: letsencrypt-prod
-    traefik.ingress.kubernetes.io/router.entrypoints: websecure
-    traefik.ingress.kubernetes.io/router.tls: "true"
-    # Format Traefik CRD : <namespace>-<middleware-name>@kubernetescrd
-    traefik.ingress.kubernetes.io/router.middlewares: allbal-allbal-basic-auth@kubernetescrd
+  name: letsencrypt-allbal-prod
 spec:
-  ingressClassName: traefik
-  tls:
-    - hosts:
-        - bal.perso.frenchtoast.dev
-      secretName: allbal-tls-cert
+  acme:
+    email: mathieuv@frenchtoast.dev
+    privateKeySecretRef:
+      name: letsencrypt-allbal-prod-account-key
+    server: https://acme-v02.api.letsencrypt.org/directory
+    solvers:
+      - http01:
+          gatewayHTTPRoute:
+            parentRefs:
+              - group: gateway.networking.k8s.io
+                kind: Gateway
+                name: allbal-gateway
+                namespace: traefik
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: allbal-gateway-tls
+  namespace: traefik
+spec:
+  dnsNames:
+    - bal.perso.frenchtoast.dev
+  issuerRef:
+    kind: ClusterIssuer
+    name: letsencrypt-allbal-prod
+  secretName: allbal-gateway-tls-secret
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: allbal-gateway
+  namespace: traefik
+  labels:
+    app.kubernetes.io/part-of: allbal
+spec:
+  gatewayClassName: traefik
+  listeners:
+    - name: http
+      port: 8000
+      protocol: HTTP
+      hostname: "bal.perso.frenchtoast.dev"
+      allowedRoutes:
+        namespaces:
+          from: All
+    - name: https
+      port: 8443
+      protocol: HTTPS
+      hostname: "bal.perso.frenchtoast.dev"
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - group: ""
+            kind: Secret
+            name: allbal-gateway-tls-secret
+      allowedRoutes:
+        namespaces:
+          from: All
+---
+# 6. HTTPRoute pour bal.perso.frenchtoast.dev avec filtre BasicAuth
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: allbal-route
+  namespace: allbal
+  labels:
+    app: allbal
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: allbal-gateway
+      namespace: traefik
+  hostnames:
+    - "bal.perso.frenchtoast.dev"
   rules:
-    - host: bal.perso.frenchtoast.dev
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: allbal
-                port:
-                  number: 80
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      filters:
+        - type: ExtensionRef
+          extensionRef:
+            group: traefik.io
+            kind: Middleware
+            name: allbal-basic-auth
+      backendRefs:
+        - group: ""
+          kind: Service
+          name: allbal
+          port: 80
+          weight: 1

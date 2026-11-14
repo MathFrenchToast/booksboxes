@@ -73,41 +73,78 @@ L'objectif du projet **AllBAL** est de :
 
 ---
 
-## Structure cible du projet
+## ADR-005 : Sécurité, CI/CD (GHCR) et Déploiement K3s avec PVC `local-path` & Gateway API
+
+- **Statut** : Retenu & Déployé (`https://bal.perso.frenchtoast.dev`)
+- **Contexte** : L'application doit être déployée sur le cluster K3s de `vm-hostinger` derrière le sous-domaine `bal.perso.frenchtoast.dev` protégé par une authentification HTTP BasicAuth (équivalent `.htaccess`), tout en garantissant la persistance de la base SQLite (`~15 Mo`) lors des redémarrages de Pod ou de l'hôte.
+- **Décision** :
+  1. **Durcissement Sécurité (Code & Dépendances)** :
+     - Parsing XML sécurisé contre les attaques XXE/Billion Laughs via `defusedxml.ElementTree`.
+     - Validation stricte anti-SSRF / anti-Open-Redirect (`is_safe_http_url`, `is_allowed_scrape_url`) sur le proxy de résolution des photos (`GET /api/photo/{bookcase_id}`) et assainissement anti-XSS côté client (`sanitizeUrl`).
+     - Pipeline GitHub Actions (`.github/workflows/ci.yml`) bloquant la publication d'image si l'un des contrôles échoue : `ruff check`, `ruff format --check`, `bandit` (SAST), `pip-audit` (SCA) ou `pytest` (15 tests).
+  2. **Image Conteneur Multi-Stage (`Dockerfile`)** :
+     - Build reproductible avec `uv sync --frozen --no-dev` sur `python:3.12-slim`, exécuté sous un utilisateur non-root (`uid/gid 10001`).
+     - Script d'entrée `docker-entrypoint.sh` initialisant automatiquement la base SQLite (`allbal.cli init` + `sync-zone` sur Saint-Julia `31540` rayon `20 km`) uniquement si le fichier `/app/data/allbal.db` est absent sur le volume persistant.
+  3. **Hébergement SQLite sur K3s (`k8s/deployment.yaml`)** :
+     - **Stockage** : `PersistentVolumeClaim` (`allbal-data-pvc`, `200Mi`, `ReadWriteOnce`, `storageClassName: local-path`) attaché à un `Deployment` mono-réplica (`replicas: 1`) configuré en `strategy.type: Recreate` pour éviter tout verrouillage concurrent (`SQLITE_BUSY` / multi-attach) sur le mode WAL de SQLite.
+     - **Évolution future identifiée** : La base étant déjà configurée en mode `PRAGMA journal_mode=WAL;`, l'ajout d'un sidecar **Litestream** (`litestream restore` en `initContainer` + `litestream replicate` vers S3) pourra être activé sans aucune modification du code Python si une réplication externe hors-nœud devient nécessaire.
+     - **Exposition & Sécurité Edge** : Utilisation de la **Kubernetes Gateway API** (`Gateway` `allbal-gateway` dans `traefik` + `HTTPRoute` `allbal-route`), certificat TLS Let's Encrypt géré par `cert-manager` (`ClusterIssuer` `letsencrypt-allbal-prod` en HTTP-01 `gatewayHTTPRoute`), et `Middleware` Traefik `basicAuth` (`allbal-basic-auth` lié au secret `allbal-basic-auth-secret`).
+- **Sources de référence** :
+  - Documentation K3s Storage (`local-path`) : [https://docs.k3s.io/storage](https://docs.k3s.io/storage)
+  - Documentation Traefik BasicAuth Middleware : [https://doc.traefik.io/traefik/middlewares/http/basicauth/](https://doc.traefik.io/traefik/middlewares/http/basicauth/)
+  - Documentation Astral `uv` Docker Integration : [https://docs.astral.sh/uv/guides/integration/docker/](https://docs.astral.sh/uv/guides/integration/docker/)
+  - Documentation Litestream on Kubernetes : [https://litestream.io/guides/kubernetes/](https://litestream.io/guides/kubernetes/)
+
+---
+
+## Structure du projet
 
 ```text
 allbal/
 ├── README.md
-├── pyproject.toml               # Dépendances Python (fastapi, uvicorn, httpx, beautifulsoup4, pytest)
+├── pyproject.toml               # Dépendances Python & configuration ruff / bandit / pytest
+├── uv.lock                      # Lockfile reproductible uv
+├── Dockerfile                   # Build multi-stage non-root (python:3.12-slim + uv)
+├── docker-entrypoint.sh         # Auto-init SQLite sur PVC vierge puis lancement Uvicorn
+├── .dockerignore
+├── .gitignore
+├── .github/
+│   └── workflows/
+│       └── ci.yml               # CI (ruff, bandit, pip-audit, pytest) + Push GHCR
+├── k8s/
+│   ├── argocd-application.yaml  # Application GitOps Argo CD (auto-sync sur main)
+│   ├── kustomization.yaml       # Entrée Kustomize lue par Argo CD
+│   └── deployment.yaml          # Manifeste K3s (Namespace, PVC, Deployment, Service, Middleware, Gateway, HTTPRoute, Cert-Manager)
 ├── doc/
 │   ├── sources_analysis.md      # Audit technique des 7 sites et endpoints découverts
 │   ├── adr.md                   # Décisions d'architecture (ce document)
-│   └── tasks.md                 # Plan de réalisation détaillé pour le modèle d'implémentation
-├── data/                        # Dossier local (ignoré par git sauf .gitkeep)
-│   ├── raw/                     # Cache local des fichiers téléchargés (GPX, JSON, JS)
-│   └── allbal.db                # Base SQLite (raw_records + bookcases + rtree)
+│   └── tasks.md                 # Plan de réalisation et suivi des étapes
+├── data/                        # Dossier local (ignoré par git)
+│   ├── raw/                     # Cache local des fichiers téléchargés (GPX, JSON, JS, HTML)
+│   └── allbal.db                # Base SQLite locale (~15 Mo : raw_records + bookcases + rtree)
 ├── src/
 │   └── allbal/
 │       ├── __init__.py
-│       ├── db.py                # Schéma SQLite, R*Tree, requêtes spatiales Haversine
-│       ├── models.py            # Modèles Pydantic / dataclasses normalisés
-│       ├── ingest/              # Connecteurs par source
+│       ├── db.py                # Schéma SQLite WAL, R*Tree, requêtes spatiales Haversine
+│       ├── models.py            # Modèles de données normalisés
+│       ├── ingest/              # Connecteurs Fair-Use par source
 │       │   ├── __init__.py
-│       │   ├── base.py          # Classe abstraite d'ingestion + cache HTTP
-│       │   ├── osm_overpass.py  # Connecteur Overpass API & GPX boites-a-livres.fr
-│       │   ├── zonelivre.py     # Connecteur WP GeoDirectory REST API
-│       │   ├── boitesalivres_com.py # Connecteur Quadtree bbox boitesalivres.com
+│       │   ├── base.py          # Client HTTP avec cache disque et User-Agent explicite
+│       │   ├── osm_overpass.py  # Connecteur GPX boites-a-livres.fr (defusedxml)
+│       │   ├── zonelivre.py     # Connecteur WP GeoDirectory REST API (/markers & batch /lieu)
+│       │   ├── boitesalivres_com.py # Connecteur BBox boitesalivres.com + orchestrateur sync_geographic_zone
 │       │   ├── lebouquinfrancais.py # Connecteur parser JS bal.js
 │       │   └── nonmarchand.py   # Connecteur parser HTML PmWiki
-│       ├── deduplicate.py       # Algorithme de conflation spatiale (R*Tree + Haversine)
-│       ├── cli.py               # CLI: `python -m allbal.cli ingest|dedup|stats|serve`
-│       ├── api.py               # Application FastAPI (/api/bookcases, /api/stats, etc.)
-│       └── static/              # Interface Web (Carte + Liste par périmètre)
+│       ├── deduplicate.py       # Algorithme de conflation spatiale (rayon 100 m, R*Tree + Haversine)
+│       ├── cli.py               # CLI: `init`, `sync-zone`, `dedup`, `stats`, `serve` (auto free port >= 8000)
+│       ├── api.py               # FastAPI (/api/bookcases, /api/bookcases/bbox, /api/stats, /api/export.geojson, /api/photo/{id})
+│       └── static/              # Interface Web (Carte Leaflet + MarkerCluster + Liste + Modal photo)
 │           ├── index.html
 │           ├── style.css
 │           └── app.js
 └── tests/
-    ├── test_db_spatial.py
-    ├── test_parsers.py
-    └── test_deduplicate.py
+    ├── test_api_integration.py  # Tests API, fichiers statiques, sécurité URL et sélection de port libre
+    ├── test_db_spatial.py       # Tests Haversine, R*Tree, cache de zone et statistiques
+    ├── test_deduplicate.py      # Tests de fusion spatiale à 100 m
+    └── test_parsers.py          # Tests unitaires des 5 parseurs sur fixtures
 ```

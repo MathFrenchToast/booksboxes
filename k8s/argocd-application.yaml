@@ -1,0 +1,65 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: allbal
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/MathFrenchToast/booksboxes.git
+    targetRevision: main
+    path: k8s
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: allbal
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        - /status
+    - group: ""
+      kind: PersistentVolumeClaim
+      jsonPointers:
+        - /spec/volumeName
+        - /spec/volumeMode
+        - /status
+        - /metadata/annotations
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      jsonPointers:
+        - /status
+      jqPathExpressions:
+        - ".spec.parentRefs[]?.group"
+        - ".spec.parentRefs[]?.kind"
+        - ".spec.rules[]?.backendRefs[]?.group"
+        - ".spec.rules[]?.backendRefs[]?.kind"
+        - ".spec.rules[]?.backendRefs[]?.weight"
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      jsonPointers:
+        - /status
+      jqPathExpressions:
+        - ".spec.listeners[]?.tls?.certificateRefs[]?.group"
+        - ".spec.listeners[]?.tls?.certificateRefs[]?.kind"
+    - group: cert-manager.io
+      kind: ClusterIssuer
+      jsonPointers:
+        - /status
+      jqPathExpressions:
+        - ".spec.acme.solvers[]?.http01?.gatewayHTTPRoute?.parentRefs[]?.group"
+        - ".spec.acme.solvers[]?.http01?.gatewayHTTPRoute?.parentRefs[]?.kind"
+    - group: cert-manager.io
+      kind: Certificate
+      jsonPointers:
+        - /status
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+      - RespectIgnoreDifferences=true
+

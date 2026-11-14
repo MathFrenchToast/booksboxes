@@ -93,28 +93,42 @@ Options disponibles pour `serve` :
 
 ---
 
-## Déploiement sur K3s (`bal.perso.frenchtoast.dev`)
+## Déploiement en production sur K3s (`bal.perso.frenchtoast.dev`)
 
-La base SQLite consolidée ne pesant que **15 Mo** (~24 300 boîtes uniques + index R\*Tree), le déploiement utilise un conteneur léger publié sur `ghcr.io/mathfrenchtoast/booksboxes:latest` et un `PersistentVolumeClaim` K3s (`local-path` de `200Mi`) protégé par BasicAuth Traefik (équivalent `.htaccess`).
+L'application est déployée sur le cluster K3s de `vm-hostinger` à l'adresse :
+👉 **[https://bal.perso.frenchtoast.dev](https://bal.perso.frenchtoast.dev)** *(protégée par BasicAuth Traefik + TLS Let's Encrypt via Cert-Manager et Kubernetes Gateway API)*.
 
-### 1. Créer le namespace et le secret BasicAuth (`.htaccess`)
+La base SQLite consolidée ne pesant que **15 Mo** (~24 400 boîtes uniques + index R\*Tree), le déploiement utilise une image conteneur légère non-root publiée automatiquement par GitHub Actions sur `ghcr.io/mathfrenchtoast/booksboxes:latest` et un `PersistentVolumeClaim` K3s (`local-path` de `200Mi` en mode `ReadWriteOnce` avec stratégie `Recreate`).
+
+### 1. Créer le namespace, copier le `ghcr-secret` existant et créer le secret BasicAuth (`.htaccess`)
 Sur le cluster K3s (`vm-hostinger`) :
 ```bash
 kubectl create namespace allbal --dry-run=client -o yaml | kubectl apply -f -
 
-# Générer l'entrée htpasswd et créer le Secret lu par le Middleware Traefik
-kubectl -n allbal create secret generic allbal-basic-auth-secret \
-  --from-literal=users="$(htpasswd -nb mathieu 'VOTRE_MOT_DE_PASSE')"
-```
-*(Si le package GHCR est privé, créez également un `imagePullSecret` ou passez le package `booksboxes` en visibilité Public dans les paramètres GitHub Packages).*
+# Copier le pull secret GHCR déjà présent dans le namespace sf2 (ou t3d)
+kubectl get secret ghcr-secret -n sf2 -o json \
+  | jq 'del(.metadata.resourceVersion,.metadata.uid,.metadata.creationTimestamp,.metadata.annotations,.metadata.ownerReferences) | .metadata.namespace="allbal"' \
+  | kubectl apply -f -
 
-### 2. Appliquer le manifeste K3s (PVC + Deployment + Service + Middleware + Ingress)
-```bash
-kubectl apply -f k8s/deployment.yaml
+# Générer ou mettre à jour le Secret BasicAuth (format bcrypt) lu par le Middleware Traefik
+kubectl -n allbal create secret generic allbal-basic-auth-secret \
+  --from-literal=users="$(htpasswd -nbB mathieu 'VOTRE_MOT_DE_PASSE')" \
+  --dry-run=client -o yaml | kubectl apply -f -
 ```
+
+### 2. Activer le déploiement GitOps via Argo CD (recommandé)
+Le dépôt étant public (`https://github.com/MathFrenchToast/booksboxes.git`), Argo CD sur `vm-hostinger` synchronise automatiquement le dossier [`k8s/`](k8s/) (`kustomization.yaml` $\rightarrow$ `deployment.yaml`) avec `selfHeal: true` et `prune: true` :
+```bash
+kubectl apply -f k8s/argocd-application.yaml
+```
+*(Ou en application directe sans Argo CD : `kubectl apply -k k8s/`).*
 
 - **Premier démarrage automatique** : si `/app/data/allbal.db` est absent sur le PVC, [`docker-entrypoint.sh`](docker-entrypoint.sh) initialise automatiquement le socle national (`allbal.cli init`) et enrichit la zone 31540 (`allbal.cli sync-zone`).
-- **Alternative (copie directe de votre base locale de 15 Mo vers le Pod)** :
+- **Mettre à jour vers la dernière image publiée sur GHCR** :
+  ```bash
+  kubectl -n allbal rollout restart deployment/allbal
+  ```
+- **Alternative (copie directe d'une base locale `data/allbal.db` vers le PVC du Pod)** :
   ```bash
   POD=$(kubectl -n allbal get pod -l app=allbal -o jsonpath='{.items[0].metadata.name}')
   kubectl -n allbal cp data/allbal.db "$POD:/app/data/allbal.db"

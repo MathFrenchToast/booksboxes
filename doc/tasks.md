@@ -23,7 +23,7 @@ flowchart TB
 
     subgraph DB["Méta-BDD SQLite Locale"]
         RAW[("raw_records\n+ fetched_zones")]
-        DEDUP["Conflation Spatiale\n(Haversine <= 35m)"]
+        DEDUP["Conflation Spatiale\n(Haversine <= 100m)"]
         META[("bookcases\n+ bookcases_rtree")]
     end
 
@@ -245,5 +245,22 @@ Offrir une interface claire, rapide et responsive sur ordinateur et mobile répo
      - Bascule fluide mobile (onglets Carte / Liste).
 
 ### Critère de validation (Test)
-- `pytest tests/test_api_integration.py` valide la distribution de `index.html`, `style.css`, `app.js` ainsi que le bon fonctionnement des endpoints `/api/stats`, `/api/bookcases`, `/api/bookcases/bbox` et `/api/export.geojson`.
+- `pytest tests/test_api_integration.py` valide la distribution de `index.html`, `style.css`, `app.js` ainsi que le bon fonctionnement des endpoints `/api/stats`, `/api/bookcases`, `/api/bookcases/bbox`, `/api/export.geojson` et `/api/photo/{id}`.
+
+---
+
+## Étape 7 : Sécurité, CI/CD GHCR et Déploiement Production K3s (`bal.perso.frenchtoast.dev`) [TERMINEE]
+
+### Réalisations
+1. **Audit et durcissement de sécurité** :
+   - Remplacement de `xml.etree.ElementTree` par `defusedxml.ElementTree` dans `osm_overpass.py`.
+   - Validation anti-SSRF / anti-Open-Redirect (`is_safe_http_url`, `is_allowed_scrape_url`) sur `/api/photo/{bookcase_id}` et protection anti-XSS (`sanitizeUrl`) côté frontend.
+   - Sélection automatique d'un port libre `>= 8000` (`find_free_port`) sur la commande `allbal.cli serve`.
+2. **Pipeline CI/CD GitHub Actions (`.github/workflows/ci.yml`)** :
+   - Job `quality-and-security` : `ruff check`, `ruff format --check`, `bandit -c pyproject.toml -r src/`, `pip-audit`, `pytest -v` (15 tests).
+   - Job `docker-publish` : Build multi-stage (`Dockerfile`) et publication automatique sur `ghcr.io/mathfrenchtoast/booksboxes:latest`.
+3. **Déploiement sur le cluster K3s `vm-hostinger` (`k8s/deployment.yaml`)** :
+   - Stockage SQLite sur `PersistentVolumeClaim` `allbal-data-pvc` (`200Mi`, `local-path`, `ReadWriteOnce`) avec `Deployment` en `strategy.type: Recreate` et auto-initialisation via `docker-entrypoint.sh`.
+   - Exposition HTTPS sur `https://bal.perso.frenchtoast.dev` via **Kubernetes Gateway API** (`allbal-gateway` + `allbal-route`), certificat Let's Encrypt (`cert-manager`) et protection **BasicAuth Traefik** (`allbal-basic-auth`).
+
 
